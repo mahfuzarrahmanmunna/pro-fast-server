@@ -35,6 +35,27 @@ async function run() {
             res.send(result);
         });
 
+        // get the user parcel with email query user-parcel?email=ma...@gmail.com
+        app.get('/user-parcels', async (req, res) => {
+            const userEmail = req.query.email;
+
+            if (!userEmail) {
+                return res.status(400).send({ error: "Missing email query parameter" });
+            }
+
+            try {
+                const result = await parcelCollection
+                    .find({ createdBy: userEmail })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch user parcels" });
+            }
+        });
+
         console.log("✅ MongoDB connected.");
     } catch (err) {
         console.error(err);
