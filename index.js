@@ -1,7 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
+const stripe = require('stripe')('sk_test_...'); // Use your Stripe secret key
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -69,6 +71,21 @@ async function run() {
             res.send(result)
             console.log(id);
         })
+
+        // get the customer payment method
+        app.post('/create-payment-intent', async (req, res) => {
+            try {
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: 1000, // Amount in cents
+                    currency: 'usd',
+                    payment_method_types: ['card'],
+                });
+
+                res.json({ clientSecret: paymentIntent.client_secret });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
 
         console.log("✅ MongoDB connected.");
     } catch (err) {
