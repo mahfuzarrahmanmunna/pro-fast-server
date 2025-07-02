@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const stripe = require('stripe')('sk_test_...'); // Use your Stripe secret key
+const stripe = require('stripe')(process.env.PAYMENT_GETWAY_KEY); // Use your Stripe secret key
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 
@@ -25,6 +25,7 @@ async function run() {
         // await client.connect();
 
         const parcelCollection = client.db('parcelDB').collection('parcels');
+        const paymentCollection = client.db('parcelDB').collection('payments');
 
         app.get('/all-parcel', async (req, res) => {
             const result = await parcelCollection.find().toArray();
@@ -74,9 +75,10 @@ async function run() {
 
         // get the customer payment method
         app.post('/create-payment-intent', async (req, res) => {
+            const amountInCent = req.body.amountInCent;
             try {
                 const paymentIntent = await stripe.paymentIntents.create({
-                    amount: 1000, // Amount in cents
+                    amount: amountInCent, // Amount in cents
                     currency: 'usd',
                     payment_method_types: ['card'],
                 });
