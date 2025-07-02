@@ -89,6 +89,44 @@ async function run() {
             }
         });
 
+        //
+        // Save payment and update parcel
+        app.post('/payment-success', async (req, res) => {
+            const { transactionId, amount, email, parcelId, createdAt } = req.body;
+
+            if (!transactionId || !parcelId || !email) {
+                return res.status(400).json({ error: 'Missing payment data.' });
+            }
+
+            try {
+                // 1. Mark parcel as paid
+                const parcelResult = await parcelCollection.updateOne(
+                    { _id: new ObjectId(parcelId) },
+                    { $set: { payment_status: 'paid' } }
+                );
+
+                // 2. Save payment record
+                const paymentData = {
+                    transactionId,
+                    amount,
+                    email,
+                    parcelId,
+                    createdAt: createdAt || new Date(),
+                };
+
+                const paymentResult = await paymentCollection.insertOne(paymentData);
+
+                res.status(200).json({
+                    message: "Payment processed successfully",
+                    parcelUpdate: parcelResult,
+                    paymentInsert: paymentResult,
+                });
+            } catch (error) {
+                console.error("Payment processing error:", error);
+                res.status(500).json({ error: "Failed to process payment" });
+            }
+        });
+
         console.log("✅ MongoDB connected.");
     } catch (err) {
         console.error(err);
