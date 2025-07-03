@@ -190,6 +190,27 @@ async function run() {
             }
         });
 
+        // get tracking by id
+        app.get('/track/:trackingId', async (req, res) => {
+            const { trackingId } = req.params;
+
+            try {
+                const updates = await trackingCollection
+                    .find({ trackingId })
+                    .sort({ timestamp: 1 }) // oldest to newest
+                    .toArray();
+
+                if (!updates.length) {
+                    return res.status(404).json({ error: 'No tracking history found' });
+                }
+
+                res.send({ trackingId, updates });
+            } catch (error) {
+                res.status(500).json({ error: 'Failed to fetch tracking updates' });
+            }
+        });
+
+
 
         console.log("✅ MongoDB connected.");
     } catch (err) {
