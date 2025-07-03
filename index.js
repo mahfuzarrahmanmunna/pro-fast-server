@@ -26,6 +26,7 @@ async function run() {
 
         const parcelCollection = client.db('parcelDB').collection('parcels');
         const paymentCollection = client.db('parcelDB').collection('payments');
+        const trackingCollection = client.db('parcelDB').collection('tracking');
 
         app.get('/all-parcel', async (req, res) => {
             const result = await parcelCollection.find().toArray();
@@ -163,6 +164,32 @@ async function run() {
                 res.status(500).json({ error: "Failed to fetch payment history" });
             }
         });
+
+        // tracking by id
+        app.post('/track-update', async (req, res) => {
+            const { trackingId, parcelId, status, location } = req.body;
+
+            if (!trackingId || !parcelId || !status || !location) {
+                return res.status(400).json({ error: 'Missing required fields' });
+            }
+
+            const trackingEntry = {
+                trackingId,
+                parcelId,
+                status,
+                location,
+                timestamp: new Date()
+            };
+
+            try {
+                const result = await trackingCollection.insertOne(trackingEntry);
+                res.send({ message: 'Tracking update saved', insertedId: result.insertedId });
+            } catch (error) {
+                console.error('Error inserting tracking:', error);
+                res.status(500).json({ error: 'Failed to save tracking update' });
+            }
+        });
+
 
         console.log("✅ MongoDB connected.");
     } catch (err) {
