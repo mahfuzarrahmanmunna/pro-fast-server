@@ -60,9 +60,24 @@ async function run() {
         // get single parcel
         app.get('/single-parcel/:id', async (req, res) => {
             const { id } = req.params;
-            const result = await parcelCollection.findOne({ _id: new ObjectId(id) })
-            res.send(result)
-        })
+
+            // ✅ Validate the ObjectId before querying
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({ error: 'Invalid parcel ID format' });
+            }
+
+            try {
+                const result = await parcelCollection.findOne({ _id: new ObjectId(id) });
+                if (!result) {
+                    return res.status(404).json({ error: 'Parcel not found' });
+                }
+                res.send(result);
+            } catch (err) {
+                console.error('Error fetching parcel:', err);
+                res.status(500).json({ error: 'Server error' });
+            }
+        });
+
 
 
         // delete method for parcel delete
@@ -89,7 +104,7 @@ async function run() {
             }
         });
 
-        //
+
         // Save payment and update parcel
         app.post('/payment-success', async (req, res) => {
             const { transactionId, amount, email, parcelId, createdAt } = req.body;
@@ -102,7 +117,11 @@ async function run() {
                 // 1. Mark parcel as paid
                 const parcelResult = await parcelCollection.updateOne(
                     { _id: new ObjectId(parcelId) },
-                    { $set: { payment_status: 'paid' } }
+                    {
+                        $set: {
+                            payment_status: 'paid'
+                        }
+                    }
                 );
 
                 // 2. Save payment record
@@ -111,7 +130,8 @@ async function run() {
                     amount,
                     email,
                     parcelId,
-                    createdAt: createdAt || new Date(),
+                    paid_at: new Date(),
+                    createdAt: createdAt || new Date().toISOString(),
                 };
 
                 const paymentResult = await paymentCollection.insertOne(paymentData);
@@ -124,6 +144,23 @@ async function run() {
             } catch (error) {
                 console.error("Payment processing error:", error);
                 res.status(500).json({ error: "Failed to process payment" });
+            }
+        });
+
+
+        app.get('/user-payments', async (req, res) => {
+            const { email } = req.query;
+            if (!email) return res.status(400).json({ error: "Missing email" });
+
+            try {
+                const result = await paymentCollection
+                    .find({ email })
+                    .sort({ createdAt: -1 }) // latest first
+                    .toArray();
+
+                res.send(result);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to fetch payment history" });
             }
         });
 
