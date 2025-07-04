@@ -1,16 +1,41 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const stripe = require('stripe')(process.env.PAYMENT_GETWAY_KEY); // Use your Stripe secret key
+const stripe = require('stripe')(process.env.PAYMENT_GETWAY_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+var admin = require("firebase-admin");
 
 
 const app = express();
 const port = process.env.PORT || 3000;
 
+
+var serviceAccount = require("path/to/serviceAccountKey.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// custom middleware
+const verifyFBToken = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).send({ message: "Unauthorized Access" })
+    }
+
+    // token
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+        return res.status(401).send({ message: "Unauthorized Access" })
+    }
+    console.log('header in middleware', token);
+    next()
+}
 
 const client = new MongoClient(process.env.DB_URI, {
     serverApi: {
@@ -23,7 +48,7 @@ const client = new MongoClient(process.env.DB_URI, {
 async function run() {
     try {
         // await client.connect();
-        const userCollection = client.db('parcelDB').collection('users')
+        const userCollection = client.db('parcelDB').collection('users');
         const parcelCollection = client.db('parcelDB').collection('parcels');
         const paymentCollection = client.db('parcelDB').collection('payments');
         const trackingCollection = client.db('parcelDB').collection('tracking');
@@ -31,8 +56,57 @@ async function run() {
         app.post('/users', async (req, res) => {
             const newUser = req.body;
             const result = await userCollection.insertOne(newUser);
-            res.send(result)
-        })
+            res.send(result);
+        });
+
+        app.get('/users', async (req, res) => {
+            try {
+                const result = await userCollection.find().toArray();
+                res.send(result);
+            } catch (err) {
+                console.error('Error fetching users:', err);
+                res.status(500).json({ error: 'Failed to fetch users' });
+            }
+        });
+
+        app.put('/users', async (req, res) => {
+            const user = req.body;
+
+            if (!user?.email) {
+                return res.status(400).json({ error: 'Missing user email' });
+            }
+
+            const filter = { email: user.email };
+            const updateDoc = {
+                $setOnInsert: {
+                    role: user.role || 'customer',
+                    createdAt: new Date(),
+                },
+                $set: {
+                    name: user.name,
+                    photo: user.photo,
+                    lastLogin: new Date(),
+                    uid: user.uid || null,
+                }
+            };
+
+            const options = { upsert: true, returnDocument: 'after' };
+
+            try {
+                const result = await userCollection.findOneAndUpdate(filter, updateDoc, options);
+                const isNewUser = result.lastErrorObject && result.lastErrorObject.upserted != null;
+
+                res.send({
+                    message: isNewUser ? 'New user created' : 'User updated',
+                    user: result.value,
+                    isNewUser
+                });
+            } catch (error) {
+                console.error("Error upserting user:", error);
+                res.status(500).json({ error: "Failed to save user data" });
+            }
+        });
+
 
         app.get('/all-parcel', async (req, res) => {
             const result = await parcelCollection.find().toArray();
@@ -45,16 +119,14 @@ async function run() {
             res.send(result);
         });
 
-        // get the user parcel with email query user-parcel?email=ma...@gmail.com
         app.get('/user-parcels', async (req, res) => {
             const userEmail = req.query.email;
-
             const query = userEmail ? { creator_email: userEmail } : {};
 
             try {
                 const result = await parcelCollection
                     .find(query)
-                    .sort({ creation_date: -1 }) // Always sorted newest first
+                    .sort({ creation_date: -1 })
                     .toArray();
 
                 res.send(result);
@@ -64,11 +136,9 @@ async function run() {
             }
         });
 
-        // get single parcel
         app.get('/single-parcel/:id', async (req, res) => {
             const { id } = req.params;
 
-            // ✅ Validate the ObjectId before querying
             if (!ObjectId.isValid(id)) {
                 return res.status(400).json({ error: 'Invalid parcel ID format' });
             }
@@ -85,34 +155,27 @@ async function run() {
             }
         });
 
-
-
-        // delete method for parcel delete
         app.delete('/single-parcel/:id', async (req, res) => {
             const { id } = req.params;
             const result = await parcelCollection.deleteOne({ _id: new ObjectId(id) });
-            res.send(result)
+            res.send(result);
             console.log(id);
-        })
+        });
 
-        // get the customer payment method
         app.post('/create-payment-intent', async (req, res) => {
             const amountInCent = req.body.amountInCent;
             try {
                 const paymentIntent = await stripe.paymentIntents.create({
-                    amount: amountInCent, // Amount in cents
+                    amount: amountInCent,
                     currency: 'usd',
                     payment_method_types: ['card'],
                 });
-
                 res.json({ clientSecret: paymentIntent.client_secret });
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
         });
 
-
-        // Save payment and update parcel
         app.post('/payment-success', async (req, res) => {
             const { transactionId, amount, email, parcelId, createdAt } = req.body;
 
@@ -121,17 +184,11 @@ async function run() {
             }
 
             try {
-                // 1. Mark parcel as paid
                 const parcelResult = await parcelCollection.updateOne(
                     { _id: new ObjectId(parcelId) },
-                    {
-                        $set: {
-                            payment_status: 'paid'
-                        }
-                    }
+                    { $set: { payment_status: 'paid' } }
                 );
 
-                // 2. Save payment record
                 const paymentData = {
                     transactionId,
                     amount,
@@ -154,15 +211,15 @@ async function run() {
             }
         });
 
+        app.get('/user-payments', verifyFBToken, async (req, res) => {
 
-        app.get('/user-payments', async (req, res) => {
             const { email } = req.query;
             if (!email) return res.status(400).json({ error: "Missing email" });
 
             try {
                 const result = await paymentCollection
                     .find({ email })
-                    .sort({ createdAt: -1 }) // latest first
+                    .sort({ createdAt: -1 })
                     .toArray();
 
                 res.send(result);
@@ -171,7 +228,6 @@ async function run() {
             }
         });
 
-        // tracking by id
         app.post('/track-update', async (req, res) => {
             const { trackingId, parcelId, status, location } = req.body;
 
@@ -196,14 +252,13 @@ async function run() {
             }
         });
 
-        // get tracking by id
         app.get('/track/:trackingId', async (req, res) => {
             const { trackingId } = req.params;
 
             try {
                 const updates = await trackingCollection
                     .find({ trackingId })
-                    .sort({ timestamp: 1 }) // oldest to newest
+                    .sort({ timestamp: 1 })
                     .toArray();
 
                 if (!updates.length) {
@@ -215,8 +270,6 @@ async function run() {
                 res.status(500).json({ error: 'Failed to fetch tracking updates' });
             }
         });
-
-
 
         console.log("✅ MongoDB connected.");
     } catch (err) {
