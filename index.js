@@ -23,10 +23,16 @@ const client = new MongoClient(process.env.DB_URI, {
 async function run() {
     try {
         // await client.connect();
-
+        const userCollection = client.db('parcelDB').collection('users')
         const parcelCollection = client.db('parcelDB').collection('parcels');
         const paymentCollection = client.db('parcelDB').collection('payments');
         const trackingCollection = client.db('parcelDB').collection('tracking');
+
+        app.post('/users', async (req, res) => {
+            const newUser = req.body;
+            const result = await userCollection.insertOne(newUser);
+            res.send(result)
+        })
 
         app.get('/all-parcel', async (req, res) => {
             const result = await parcelCollection.find().toArray();
