@@ -45,7 +45,16 @@ const verifyFBToken = async (req, res, next) => {
         console.error(error);
         return res.status(403).send({ message: "Forbidden Access" })
     }
-    console.log('header in middleware', token);
+}
+
+// verify email and jwt token
+const verifyEmail = (req, res, next) => {
+    const decoded = req.decoded;
+    if (decoded.email !== req.query.email) {
+        return res.status(403).send({ message: "Forbidden Access" })
+    }
+    console.log('email verification', req.query.email);
+    next()
 }
 
 const client = new MongoClient(process.env.DB_URI, {
@@ -60,6 +69,7 @@ async function run() {
     try {
         // await client.connect();
         const userCollection = client.db('parcelDB').collection('users');
+        const riderCollection = client.db('parcelDB').collection('rider')
         const parcelCollection = client.db('parcelDB').collection('parcels');
         const paymentCollection = client.db('parcelDB').collection('payments');
         const trackingCollection = client.db('parcelDB').collection('tracking');
@@ -222,10 +232,10 @@ async function run() {
             }
         });
 
-        app.get('/user-payments', verifyFBToken, async (req, res) => {
-
+        app.get('/user-payments', verifyFBToken, verifyEmail, async (req, res) => {
             const { email } = req.query;
             if (!email) return res.status(400).json({ error: "Missing email" });
+
 
             try {
                 const result = await paymentCollection
@@ -281,6 +291,37 @@ async function run() {
                 res.status(500).json({ error: 'Failed to fetch tracking updates' });
             }
         });
+
+        app.post('/be-rider', async (req, res) => {
+            const riderInfo = req.body; // Get rider info from the request body
+            // console.log(riderInfo); // Log the rider info (for debugging purposes)
+            try {
+                const result = await riderCollection.insertOne(riderInfo); // Insert rider info into the database
+                res.send(result); // Respond with the inserted data
+            } catch (error) {
+                console.log(error); // Log any errors that occur
+            }
+        });
+
+        // GET route to retrieve all riders' data
+        app.get('/be-rider', async (req, res) => {
+            try {
+                // Fetch all rider data from MongoDB
+                const riders = await riderCollection.find().toArray();
+
+                // If no riders are found, send a message indicating so
+                if (!riders || riders.length === 0) {
+                    return res.status(404).json({ message: 'No riders found' });
+                }
+
+                // Send back the retrieved rider data
+                res.status(200).json(riders);
+            } catch (error) {
+                console.error('Error retrieving riders:', error);
+                res.status(500).json({ error: 'Failed to retrieve riders' });
+            }
+        });
+
 
         console.log("✅ MongoDB connected.");
     } catch (err) {
