@@ -3,14 +3,14 @@ const cors = require('cors');
 require('dotenv').config();
 const stripe = require('stripe')(process.env.PAYMENT_GETWAY_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-var admin = require("firebase-admin");
+const admin = require("firebase-admin");
 
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 
-var serviceAccount = require("path/to/serviceAccountKey.json");
+const serviceAccount = require("./firebase-admin-key");
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -22,7 +22,7 @@ app.use(cors());
 app.use(express.json());
 
 // custom middleware
-const verifyFBToken = (req, res, next) => {
+const verifyFBToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) {
         return res.status(401).send({ message: "Unauthorized Access" })
@@ -33,8 +33,18 @@ const verifyFBToken = (req, res, next) => {
     if (!token) {
         return res.status(401).send({ message: "Unauthorized Access" })
     }
+
+    // verify token
+    try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        req.decoded = decoded;
+        next()
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(403).send({ message: "Forbidden Access" })
+    }
     console.log('header in middleware', token);
-    next()
 }
 
 const client = new MongoClient(process.env.DB_URI, {
