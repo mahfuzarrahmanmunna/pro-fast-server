@@ -34,11 +34,13 @@ LmNvbS9vYXV0aDIvdjEvY2VydHMiLAogICJjbGllbnRfeDUwOV9jZXJ0X3VybCI6ICJodHRwczovL3d3
 WFkbWluc2RrLWZic3ZjJTQwcHJvLWZhc3QtMWFlZWMuaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLAogICJ1bml2ZXJzZV9kb21haW4iOiAiZ29vZ2xlYXBpcy5jb20iCn0K`, 'base64').toString('utf8');
 console.log(process.env.FB_SERVICE_KEY);
 const serviceAccount = JSON.parse(decoded)
-console.log(serviceAccount);
+// console.log(serviceAccount);
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
 });
+
+
 
 
 // Middleware
