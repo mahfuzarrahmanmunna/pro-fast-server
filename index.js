@@ -1,7 +1,7 @@
 const express = require('express');
 const app = express()
 const cors = require('cors');
-require('dotenv').config();
+require('dotenv').config()
 const stripe = require('stripe')(process.env.PAYMENT_GETWAY_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require("firebase-admin");
@@ -447,40 +447,51 @@ async function run() {
             }
         });
 
-        // Protect this route using verifyFBToken middleware
-        app.put('/users/role/:email', async (req, res) => {
+        app.get('/users/role/:email', async (req, res) => {
             const { email } = req.params;
-            const { role } = req.body;
-
-            // Check if role is valid
-            if (!['admin', 'customer'].includes(role)) {
-                return res.status(400).json({ error: 'Invalid role specified' });
-            }
-
-            // Check if the requester is admin
-            const requesterEmail = req.decoded?.email;
-            const requester = await userCollection.findOne({ email: requesterEmail });
-
-            if (!requester || requester.role !== 'admin') {
-                return res.status(403).json({ error: 'Only admins can change user roles' });
-            }
 
             try {
-                const result = await userCollection.updateOne(
-                    { email },
-                    { $set: { role } }
-                );
+                const user = await userCollection.findOne({ email });
 
-                if (result.modifiedCount === 0) {
-                    return res.status(404).json({ error: 'User not found or role unchanged' });
+                if (!user) {
+                    return res.status(404).json({ error: 'User not found' });
                 }
 
-                res.status(200).json({ message: `User role updated to ${role}` });
+                res.status(200).json({ role: user.role });
             } catch (error) {
-                console.error('Error updating role:', error);
-                res.status(500).json({ error: 'Failed to update user role' });
+                console.error('Error fetching user role:', error);
+                res.status(500).json({ error: 'Failed to get user role' });
             }
         });
+
+
+        // Protect this route using verifyFBToken middleware
+        app.put('/users/role/:email', async (req, res) => {
+            try {
+                const email = req.params.email;
+                const { role } = req.body;
+
+                if (!email || !role) {
+                    return res.status(400).json({ error: 'Missing email or role in request.' });
+                }
+
+                const result = await userCollection.updateOne(
+                    { email: email },
+                    { $set: { role: role } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: 'User not found.' });
+                }
+
+                res.json({ message: `User role updated to ${role}` });
+            } catch (err) {
+                console.error('Error in PUT /users/role/:email =>', err); // <--- Check this in terminal
+                res.status(500).json({ error: 'Server error.' });
+            }
+        });
+
+
 
 
 
