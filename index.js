@@ -185,7 +185,10 @@ async function run() {
             if (email) query.creator_email = email;
 
             try {
-                const result = await parcelCollection.find(query).toArray();
+                const result = await parcelCollection
+                    .find(query)
+                    .sort({ createdAt: -1 }) // Sort by latest date
+                    .toArray();
                 res.send(result);
             } catch (error) {
                 console.error('Error fetching parcels:', error);
@@ -377,9 +380,6 @@ async function run() {
             try {
                 const pendingRiders = await riderCollection.find({ status: 'pending' }).toArray();
 
-                if (!pendingRiders || pendingRiders.length === 0) {
-                    return res.status(404).json({ message: 'No pending riders found' });
-                }
 
                 res.status(200).json(pendingRiders);
             } catch (error) {
@@ -396,38 +396,88 @@ async function run() {
                 return res.status(400).json({ error: 'Missing rider email' });
             }
 
-            const rider = await riderCollection.findOne({ _id: new ObjectId(id) });
-            if (!rider) {
-                return res.status(404).json({ message: 'Rider not found' });
+            try {
+                // Step 1: Approve rider (in rider collection)
+                const riderUpdate = await riderCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: 'active' } }
+                );
+
+                // Step 2: Update user's role (by email)
+                const userUpdate = await userCollection.updateOne(
+                    { email }, // ✅ correct: use email, not _id
+                    { $set: { role: 'rider' } }
+                );
+
+                if (userUpdate.matchedCount === 0) {
+                    return res.status(404).json({ error: 'User not found' });
+                }
+
+                res.status(200).json({
+                    message: 'Rider approved and user role updated to rider',
+                    riderUpdate,
+                    userUpdate
+                });
+            } catch (error) {
+                console.error('Error approving rider:', error);
+                return res.status(500).json({ error: 'Failed to approve rider' });
             }
-
-            const riderUpdate = await riderCollection.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: { status: 'active' } }
-            );
-
-            const userUpdate = await userCollection.updateOne(
-                { email: email }, // from body now
-                { $set: { role: 'rider' } }
-            );
-
-            return res.status(200).json({
-                message: 'Rider approved and user role updated to rider',
-                riderUpdate,
-                userUpdate
-            });
         });
 
+
+
         // Get all active riders (only accepted by admin)
-        app.get('/be-rider/active', verifyFBToken, verifyAdmin, async (req, res) => {
+        app.get('/be-rider/active', async (req, res) => {
+            const { region } = req.query;
+
+            const filter = region ? { status: 'active', region } : { status: 'active' };
+
             try {
-                const result = await riderCollection.find({ status: 'active' }).toArray();
+                const result = await riderCollection.find(filter).toArray();
                 res.send(result);
             } catch (error) {
                 console.error('Error fetching active riders:', error);
                 res.status(500).json({ error: 'Failed to fetch active riders' });
             }
         });
+
+        app.put('/assign-rider', async (req, res) => {
+            const { parcelId, riderEmail, riderName } = req.body;
+
+            if (!parcelId || !riderEmail) {
+                return res.status(400).json({ error: 'Missing parcel ID or rider email' });
+            }
+
+            try {
+                const parcelUpdate = await parcelCollection.updateOne(
+                    { _id: new ObjectId(parcelId) },
+                    {
+                        $set: {
+                            delivery_status: 'in-transit',
+                            assigned_rider: riderEmail,
+                            rider: riderName,
+                            assigned_at: new Date(),
+                        }
+                    }
+                );
+
+                const riderUpdate = await riderCollection.updateOne(
+                    { email: riderEmail },
+                    { $set: { work_status: 'in-busy' } }
+                );
+
+                res.status(200).json({
+                    message: 'Parcel and rider updated successfully',
+                    parcelUpdate,
+                    riderUpdate
+                });
+            } catch (error) {
+                console.error('Error assigning rider:', error);
+                res.status(500).json({ error: 'Failed to assign rider' });
+            }
+        });
+
+
 
 
         // rider delete
@@ -518,11 +568,131 @@ async function run() {
 
                 res.json({ message: `User role updated to ${role}` });
             } catch (err) {
-                console.error('Error in PUT /users/role/:email =>', err); // <--- Check this in terminal
+                console.error('Error in PUT /users/role/:email =>', err);
                 res.status(500).json({ error: 'Server error.' });
             }
         });
 
+        // rider parcel
+        app.get('/rider/pending-deliveries', async (req, res) => {
+            const { email } = req.query;
+
+            if (!email) {
+                return res.status(400).json({ error: 'Missing rider email in query' });
+            }
+
+            try {
+                const filter = {
+                    assigned_rider: email,
+                    delivery_status: { $in: ['in-transit', 'rider-assigned'] },
+                };
+
+                const parcels = await parcelCollection
+                    .find(filter)
+                    .sort({ assigned_at: -1 }) // optional: latest assigned first
+                    .toArray();
+
+                res.status(200).json(parcels);
+            } catch (error) {
+                console.error('Error fetching pending deliveries:', error);
+                res.status(500).json({ error: 'Failed to fetch pending deliveries' });
+            }
+        });
+
+
+        app.patch('/parcels/update-status/:id', async (req, res) => {
+            const { id } = req.params;
+            const { delivery_status } = req.body;
+
+            try {
+                const result = await parcelCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { delivery_status } }
+                );
+                res.send({ message: 'Status updated', result });
+            } catch (err) {
+                console.error(err);
+                res.status(500).json({ error: 'Failed to update status' });
+            }
+        });
+
+
+        app.get('/rider/pending-parcels', async (req, res) => {
+            const { email } = req.query;
+
+            if (!email) {
+                return res.status(400).json({ error: 'Missing rider email' });
+            }
+
+            try {
+                const parcels = await parcelCollection.find({
+                    assigned_rider: email,
+                    delivery_status: { $in: ['rider_assigned', 'in-transit'] }
+                }).sort({ assigned_at: -1 }).toArray();
+
+                res.send(parcels);
+            } catch (error) {
+                console.error('Error fetching pending parcels:', error);
+                res.status(500).json({ error: 'Failed to load rider parcels' });
+            }
+        });
+
+        app.put('/parcels/status/:id', async (req, res) => {
+            const { id } = req.params;
+            const { status } = req.body;
+
+            if (!id || !status) {
+                return res.status(400).json({ error: 'Missing parcel ID or new status' });
+            }
+
+            try {
+                const result = await parcelCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { delivery_status: status } }
+                );
+
+                if (result.modifiedCount === 0) {
+                    return res.status(404).json({ error: 'Parcel not found or already updated' });
+                }
+
+                res.status(200).json({ message: 'Parcel status updated', result });
+            } catch (error) {
+                console.error('Error updating parcel status:', error);
+                res.status(500).json({ error: 'Failed to update status' });
+            }
+        });
+
+        app.get('/rider/in-progress-parcels', async (req, res) => {
+            const { email } = req.query;
+            try {
+                const query = {
+                    assigned_rider: email,
+                    delivery_status: 'in-transit'
+                };
+                const result = await parcelCollection.find(query).toArray();
+                res.send(result);
+            } catch (err) {
+                console.error('Error fetching in-progress parcels:', err);
+                res.status(500).json({ error: 'Failed to fetch data' });
+            }
+        });
+
+        // Completed Parcel
+        app.get('/rider/completed-parcels', async (req, res) => {
+            const { email } = req.query;
+
+            try {
+                const completed = await parcelCollection
+                    .find({ assigned_rider: email, delivery_status: 'delivered' })
+                    .sort({ updatedAt: -1 }) // optional: show recent first
+                    .toArray();
+
+                res.send(completed);
+            } catch (err) {
+                console.error('Error fetching completed parcels:', err);
+                res.status(500).json({ error: 'Failed to fetch completed deliveries' });
+            }
+        });
 
 
 
