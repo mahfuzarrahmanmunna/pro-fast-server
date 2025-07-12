@@ -75,6 +75,9 @@ const verifyFBToken = async (req, res, next) => {
     }
 }
 
+
+
+
 // verify email and jwt token
 const verifyEmail = (req, res, next) => {
     const decoded = req.decoded;
@@ -104,6 +107,19 @@ async function run() {
         const parcelCollection = client.db('parcelDB').collection('parcels');
         const paymentCollection = client.db('parcelDB').collection('payments');
         const trackingCollection = client.db('parcelDB').collection('tracking');
+
+        // middle ware for admin verification
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded?.email;
+            const query = { email }
+            console.log(query);
+            const user = await userCollection.findOne(query);
+            console.log(user.role);
+            if (!user || user.role !== 'admin') {
+                return res.status(403).send({ message: "Forbidden Access" })
+            }
+            next()
+        };
 
         app.post('/users', async (req, res) => {
             const newUser = req.body;
@@ -161,15 +177,31 @@ async function run() {
 
 
         app.get('/all-parcel', async (req, res) => {
-            const result = await parcelCollection.find().toArray();
-            res.send(result);
+            const { payment_status, delivery_status, email } = req.query;
+
+            const query = {};
+            if (payment_status) query.payment_status = payment_status;
+            if (delivery_status) query.delivery_status = delivery_status;
+            if (email) query.creator_email = email;
+
+            try {
+                const result = await parcelCollection.find(query).toArray();
+                res.send(result);
+            } catch (error) {
+                console.error('Error fetching parcels:', error);
+                res.status(500).json({ error: 'Failed to fetch parcels' });
+            }
         });
+
 
         app.post('/add-parcel', async (req, res) => {
             const newParcel = req.body;
             const result = await parcelCollection.insertOne(newParcel);
             res.send(result);
         });
+
+
+
 
         app.get('/user-parcels', async (req, res) => {
             const userEmail = req.query.email;
@@ -387,7 +419,7 @@ async function run() {
         });
 
         // Get all active riders (only accepted by admin)
-        app.get('/be-rider/active', async (req, res) => {
+        app.get('/be-rider/active', verifyFBToken, verifyAdmin, async (req, res) => {
             try {
                 const result = await riderCollection.find({ status: 'active' }).toArray();
                 res.send(result);
@@ -421,7 +453,7 @@ async function run() {
         });
 
         // Route: Search user by email
-        app.get('/users/search', async (req, res) => {
+        app.get('/users/search', verifyFBToken, async (req, res) => {
             const email = req.query.email;
 
             if (!email) {
@@ -447,7 +479,7 @@ async function run() {
             }
         });
 
-        app.get('/users/role/:email', async (req, res) => {
+        app.get('/users/role/:email', verifyFBToken, async (req, res) => {
             const { email } = req.params;
 
             try {
@@ -466,7 +498,7 @@ async function run() {
 
 
         // Protect this route using verifyFBToken middleware
-        app.put('/users/role/:email', async (req, res) => {
+        app.put('/users/role/:email', verifyFBToken, verifyAdmin, async (req, res) => {
             try {
                 const email = req.params.email;
                 const { role } = req.body;
