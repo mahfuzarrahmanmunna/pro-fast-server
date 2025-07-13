@@ -453,10 +453,9 @@ async function run() {
                     { _id: new ObjectId(parcelId) },
                     {
                         $set: {
-                            delivery_status: 'in-transit',
                             assigned_rider: riderEmail,
                             rider: riderName,
-                            assigned_at: new Date(),
+                            assigned_at: new Date()
                         }
                     }
                 );
@@ -645,20 +644,39 @@ async function run() {
                 return res.status(400).json({ error: 'Missing parcel ID or new status' });
             }
 
+            const updateFields = {
+                delivery_status: status
+            };
+
+            // Add timestamp fields for tracking
+            if (status === 'in-transit') {
+                updateFields.picked_at = new Date();
+            }
+            if (status === 'delivered') {
+                updateFields.delivered_at = new Date();
+            }
+
             try {
                 const result = await parcelCollection.updateOne(
                     { _id: new ObjectId(id) },
-                    { $set: { delivery_status: status } }
+                    { $set: updateFields }
                 );
 
                 if (result.modifiedCount === 0) {
                     return res.status(404).json({ error: 'Parcel not found or already updated' });
                 }
 
-                res.status(200).json({ message: 'Parcel status updated', result });
+                res.status(200).json({
+                    message: `Parcel marked as '${status}'`,
+                    timestamps: {
+                        picked_at: updateFields.picked_at,
+                        delivered_at: updateFields.delivered_at
+                    },
+                    result
+                });
             } catch (error) {
                 console.error('Error updating parcel status:', error);
-                res.status(500).json({ error: 'Failed to update status' });
+                res.status(500).json({ error: 'Failed to update parcel status' });
             }
         });
 
@@ -677,20 +695,110 @@ async function run() {
             }
         });
 
-        // Completed Parcel
+        // GET /rider/completed-parcels?email=<rider_email>
         app.get('/rider/completed-parcels', async (req, res) => {
             const { email } = req.query;
 
             try {
-                const completed = await parcelCollection
-                    .find({ assigned_rider: email, delivery_status: 'delivered' })
-                    .sort({ updatedAt: -1 }) // optional: show recent first
-                    .toArray();
+                const query = {
+                    assigned_rider: email,
+                    delivery_status: 'delivered'
+                };
+                const completedParcels = await parcelCollection.find(query).toArray();
+                res.send(completedParcels);
+            } catch (error) {
+                console.error('Error fetching completed deliveries:', error);
+                res.status(500).json({ error: 'Failed to retrieve data' });
+            }
+        });
 
-                res.send(completed);
-            } catch (err) {
-                console.error('Error fetching completed parcels:', err);
-                res.status(500).json({ error: 'Failed to fetch completed deliveries' });
+        // PUT /parcels/cashout/:id
+        app.put('/parcels/cashout/:id', async (req, res) => {
+            const { id } = req.params;
+
+            try {
+                const result = await parcelCollection.updateOne(
+                    {
+                        _id: new ObjectId(id),
+                        delivery_status: 'delivered',
+                        cashed_out: { $ne: true }
+                    },
+                    {
+                        $set: {
+                            cashed_out: true,
+                            cashed_out_at: new Date()
+                        }
+                    }
+                );
+
+                if (result.modifiedCount > 0) {
+                    return res.send({ success: true });
+                } else {
+                    return res.status(400).json({ error: 'Not eligible or already cashed out' });
+                }
+            } catch (error) {
+                console.error('Cashout failed:', error);
+                res.status(500).json({ error: 'Cashout error' });
+            }
+        });
+
+        app.get('/rider/completed-parcels', async (req, res) => {
+            const { email } = req.query;
+
+            try {
+                const parcels = await parcelCollection.find({
+                    assigned_rider: email,
+                    delivery_status: 'delivered'
+                }).toArray();
+
+                res.status(200).json(parcels);
+            } catch (error) {
+                res.status(500).json({ error: 'Failed to fetch completed parcels' });
+            }
+        });
+
+        app.put('/parcels/cashout/:id', async (req, res) => {
+            const { id } = req.params;
+
+            try {
+                const result = await parcelCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { isCashedOut: true } }
+                );
+
+                if (result.modifiedCount === 0) {
+                    return res.status(404).json({ error: 'Parcel not found or already cashed out' });
+                }
+
+                res.status(200).json({ message: 'Parcel marked as cashed out' });
+            } catch (error) {
+                res.status(500).json({ error: 'Failed to update parcel cashout status' });
+            }
+        });
+
+
+        app.post('/track-update', async (req, res) => {
+            const { trackingId, parcelId, status, description, location } = req.body;
+
+            if (!trackingId || !parcelId || !status || !description) {
+                return res.status(400).json({ error: 'Missing required fields' });
+            }
+
+            const trackingEntry = {
+                trackingId,
+                parcelId,
+                status,
+                description,
+                location: location || 'N/A',
+                timestamp: new Date()
+            };
+
+            try {
+                const result = await trackingCollection.insertOne(trackingEntry);
+                res.send({ message: 'Tracking update saved', insertedId: result.insertedId });
+            } catch (error) {
+                console.error('Error inserting tracking:', error);
+                res.status(500).json({ error: 'Failed to save tracking update' });
             }
         });
 
